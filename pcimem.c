@@ -35,6 +35,11 @@
 #include <sys/types.h>
 #include <sys/mman.h>
 
+#ifdef __SIZEOF_INT128__
+#define SUPPORT128
+#define uint128_t __uint128_t
+#endif
+
 #define PRINT_ERROR \
 	do { \
 		fprintf(stderr, "Error at line %d, file %s (%d) [%s]\n", \
@@ -45,14 +50,19 @@
 int main(int argc, char **argv) {
 	int fd;
 	void *map_base, *virt_addr;
-	uint64_t read_result, writeval, prev_read_result = 0;
+    uint64_t writeval = 0;
+#ifdef SUPPORT128
+	uint128_t read_result, prev_read_result = 0;
+#else
+    uint64_t read_result, prev_read_result = 0;
+#endif
 	char *filename;
 	off_t target, target_base;
 	int access_type = 'w';
 	int items_count = 1;
 	int verbose = 0;
 	int read_result_dupped = 0;
-	int type_width;
+	int num_bytes;
 	int i;
 	int map_size = 4096UL;
 
@@ -79,17 +89,22 @@ int main(int argc, char **argv) {
 
         switch(access_type) {
 		case 'b':
-			type_width = 1;
+			num_bytes = 1;
 			break;
 		case 'h':
-			type_width = 2;
+			num_bytes = 2;
 			break;
 		case 'w':
-			type_width = 4;
+			num_bytes = 4;
 			break;
-                case 'd':
-			type_width = 8;
+        case 'd':
+			num_bytes = 8;
 			break;
+#ifdef SUPPORT128
+        case 'q':
+            num_bytes = 16;
+            break;
+#endif
 		default:
 			fprintf(stderr, "Illegal data type '%c'.\n", access_type);
 			exit(2);
@@ -101,8 +116,8 @@ int main(int argc, char **argv) {
     fflush(stdout);
 
     target_base = target & ~(sysconf(_SC_PAGE_SIZE)-1);
-    if (target + items_count*type_width - target_base > map_size)
-	map_size = target + items_count*type_width - target_base;
+    if (target + items_count*num_bytes - target_base > map_size)
+	map_size = target + items_count*num_bytes - target_base;
 
     /* Map one page */
     printf("mmap(%d, %d, 0x%x, 0x%x, %d, 0x%x)\n", 0, map_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, (int) target);
@@ -114,27 +129,48 @@ int main(int argc, char **argv) {
 
     for (i = 0; i < items_count; i++) {
 
-        virt_addr = map_base + target + i*type_width - target_base;
-        switch(access_type) {
-		case 'b':
+        virt_addr = map_base + target + i*num_bytes - target_base;
+        switch(num_bytes) {
+		case 1:
 			read_result = *((uint8_t *) virt_addr);
 			break;
-		case 'h':
+		case 2:
 			read_result = *((uint16_t *) virt_addr);
 			break;
-		case 'w':
+		case 4:
 			read_result = *((uint32_t *) virt_addr);
 			break;
-                case 'd':
+        case 8:
 			read_result = *((uint64_t *) virt_addr);
 			break;
+#ifdef SUPPORT128
+        case 16:
+            read_result = *((uint128_t *) virt_addr);
+			break;
+#endif
 	}
 
-    	if (verbose)
-            printf("Value at offset 0x%X (%p): 0x%0*lX\n", (int) target + i*type_width, virt_addr, type_width*2, read_result);
+    	if (verbose) {
+            printf("Value at offset 0x%X (%p): ", (int) target + i*num_bytes, 
+                                    virt_addr);
+            if (num_bytes < 16) {
+                printf("0x%0*zX\n", num_bytes*2, (uint64_t)read_result);
+            }
+            else {
+                printf("0x%0*zX %0*zX\n", num_bytes, (uint64_t)(read_result >> 64),
+                                        num_bytes, (uint64_t)read_result);
+            }
+        } 
         else {
-	    if (read_result != prev_read_result || i == 0) {
-                printf("0x%04X: 0x%0*lX\n", (int)(target + i*type_width), type_width*2, read_result);
+            if (read_result != prev_read_result || i == 0) {
+                printf("0x%04X: ", (int)(target + i*num_bytes));
+                if (num_bytes < 16) {
+                    printf("0x%0*zX\n", num_bytes*2, (uint64_t)read_result);
+                }
+                else {
+                    printf("0x%0*zX %0*zX\n", num_bytes, (uint64_t)(read_result >> 64),
+                                            num_bytes, (uint64_t)read_result);
+                }
                 read_result_dupped = 0;
             } else {
                 if (!read_result_dupped)
@@ -151,26 +187,39 @@ int main(int argc, char **argv) {
 
 	if(argc > 4) {
 		writeval = strtoull(argv[4], NULL, 0);
-		switch(access_type) {
-			case 'b':
+		switch(num_bytes) {
+			case 1:
 				*((uint8_t *) virt_addr) = writeval;
 				read_result = *((uint8_t *) virt_addr);
 				break;
-			case 'h':
+			case 2:
 				*((uint16_t *) virt_addr) = writeval;
 				read_result = *((uint16_t *) virt_addr);
 				break;
-			case 'w':
+			case 4:
 				*((uint32_t *) virt_addr) = writeval;
 				read_result = *((uint32_t *) virt_addr);
 				break;
-			case 'd':
+			case 8:
 				*((uint64_t *) virt_addr) = writeval;
 				read_result = *((uint64_t *) virt_addr);
 				break;
+#ifdef SUPPORT128
+            case 16:
+                *((uint128_t *) virt_addr) = (((uint128_t)writeval) << 64)|((uint128_t)writeval);
+				read_result = *((uint128_t *) virt_addr);
+				break;
+#endif
 		}
-		printf("Written 0x%0*lX; readback 0x%*lX\n", type_width,
-		       writeval, type_width, read_result);
+        if (num_bytes < 16) {
+            printf("Written 0x%0*zX,\n", num_bytes*2, writeval);
+            printf("Readbck 0x%0*zX.\n", num_bytes*2, (uint64_t)read_result);
+        }
+        else {
+            printf("Written 0x%0*zX %0*zX,\n", num_bytes, writeval, num_bytes, writeval);
+            printf("Readbck 0x%0*zX %0*zX.\n", num_bytes, (uint64_t)(read_result >> 64),
+                                                num_bytes, (uint64_t)read_result);
+        }
 		fflush(stdout);
 	}
 
