@@ -49,6 +49,7 @@
         __LINE__, __FILE__, errno, strerror(errno)); exit(1); \
     } while(0)
 
+void print_usage( char* );
 
 int main(int argc, char **argv) {
     
@@ -60,19 +61,16 @@ int main(int argc, char **argv) {
     uint64_t writeval = 0;
     uint64_t read_result = 0;
     char *filename;
-    int access_type = 'w';
+    int access_type;
 
     int i;
     
     struct timeval  time_start, time_end;
 
-    if(argc < 2) {
+    if(argc <= 2) {
         // exercise /sys/bus/pci/devices/0001\:00\:07.0/resource0 0
         // argv[0]  [1]                                           [2]
-        fprintf(stderr, "\nUsage:\t%s { sysfile } { offset } [ type*count [ data ] ]\n"
-            "\tsys file: sysfs file for the pci resource to act on\n"
-            "\ttype    : access operation type\n\n",
-            argv[0]);
+        print_usage(argv[0]);
         exit(1);
     }
     filename = argv[1];
@@ -90,6 +88,7 @@ int main(int argc, char **argv) {
             break;
         default:
             fprintf(stderr, "Illegal access type '%c'.\n", access_type);
+            print_usage(argv[0]);
             exit(2);
     }
 
@@ -131,7 +130,7 @@ int main(int argc, char **argv) {
     double time_calc;
     time_calc = (double)(   (time_end.tv_sec + 1.0E-6*time_end.tv_usec) -
                             (time_start.tv_sec + 1.0E-6*time_start.tv_usec));
-    printf("Wrote %lu bytes in %1.3f seconds (%1.3f GB/s)\n", map_size, time_calc, 
+    printf("Wrote %zu bytes in %1.3f seconds (%1.3f GB/s)\n", map_size, time_calc, 
         map_size/1024./1024./1024./time_calc);
 
     // readback check
@@ -149,10 +148,19 @@ int main(int argc, char **argv) {
     gettimeofday(&time_end, NULL);
     time_calc = (double)(   (time_end.tv_sec + 1.0E-6*time_end.tv_usec) -
                             (time_start.tv_sec + 1.0E-6*time_start.tv_usec));
-    printf("Read %lu bytes in %1.3f seconds (%1.3f GB/s)\n", map_size, time_calc, 
+    printf("Read %zu bytes in %1.3f seconds (%1.3f GB/s)\n", map_size, time_calc, 
         map_size/1024./1024./1024./time_calc);
 
     if(munmap(map_base, map_size) == -1) PRINT_ERROR;
     close(fd);
     return 0;
+}
+
+void
+print_usage( char *argv0 )
+{
+    fprintf(stderr, "\nUsage:\t%s { sysfile } { type }\n"
+            "\tsys file: sysfs file for the pci resource to act on\n"
+            "\ttype    : test fill type (0, 1)\n\n",
+            argv0);
 }
