@@ -37,11 +37,7 @@
 #include <sys/types.h>
 #include <sys/mman.h>
 #include <sys/time.h>
-
-#ifdef __SIZEOF_INT128__
-#define SUPPORT128
-#define uint128_t __uint128_t
-#endif
+#include "crc32.h"
 
 #define PRINT_ERROR \
     do { \
@@ -63,7 +59,8 @@ int main(int argc, char **argv) {
     char *filename;
     int access_type;
 
-    int i;
+    int i, j;
+    ssize_t cond;
     
     struct timeval  time_start, time_end;
 
@@ -86,6 +83,9 @@ int main(int argc, char **argv) {
         case '1':
             printf("Will write memory to all '1's...\n");
             break;
+        case 'r':
+            printf("Will write random data to memory...\n");
+            break;
         default:
             fprintf(stderr, "Illegal access type '%c'.\n", access_type);
             print_usage(argv[0]);
@@ -106,24 +106,50 @@ int main(int argc, char **argv) {
     fflush(stdout);
 
     switch(access_type) {
-        case 0:
+        case '0':
             writeval = 0;
             break;
-        case 1:
+        case '1':
             writeval = 0xFFFFFFFFFFFFFFFF;
             break;
         default:
             break;
     }
 
+    int frand = open("/dev/urandom", O_RDONLY);
+    uint32_t seed;
+    cond = read(frand,&seed,sizeof(seed));
+    close(frand);
+    if (cond < 0)
+        printf("Warning: read from /dev/urandom failed!\n");
+    srand(seed);
+    uint32_t write_checksum = 0;
+    const int CRC_BYTES = 64;
+    uint64_t temp[CRC_BYTES/8];
+
     // write the stuff
 
     virt_addr = map_base;
     gettimeofday(&time_start, NULL);
     
-    for (i = 0; i < (map_size / 8); i++) {
-        *((uint64_t *) virt_addr) = writeval;
-        virt_addr += 8;
+    switch(access_type) {
+        case '0':
+        case '1':
+            for (i = 0; i < (map_size / 8); i++) {
+                *((uint64_t *) virt_addr) = writeval;
+                virt_addr += 8;
+            }
+            break;
+        case 'r':
+            for (i = 0; i < (map_size / (8*CRC_BYTES/8)); i++) {
+                for (j = 0; j < (CRC_BYTES/8); j++) {
+                    temp[j] = ((uint64_t)rand()) | (((uint64_t)rand()) << 32);
+                    *((uint64_t *) virt_addr) = temp[j];
+                    virt_addr += 8;
+                }
+                write_checksum = crc32_16bytes(temp, CRC_BYTES, write_checksum);
+            }
+            break;
     }
     
     gettimeofday(&time_end, NULL);
@@ -132,17 +158,28 @@ int main(int argc, char **argv) {
                             (time_start.tv_sec + 1.0E-6*time_start.tv_usec));
     printf("Wrote %zu bytes in %1.3f seconds (%1.3f GB/s)\n", map_size, time_calc, 
         map_size/1024./1024./1024./time_calc);
+    if (access_type == 'r')
+        printf("Write checksum: %8x\n", write_checksum);
 
     // readback check
 
+    uint32_t read_checksum = 0;
     virt_addr = map_base;
     gettimeofday(&time_start, NULL);
     
-    for (i = 0; i < (map_size / 8); i++) {
-        read_result = *((uint64_t *) virt_addr);
-        if (read_result != writeval)
-            printf("Error in readback at location %d, %zu\n", i, read_result);
-        virt_addr += 8;
+    switch(access_type) {
+        case '0':
+        case '1':
+            for (i = 0; i < (map_size / 8); i++) {
+                read_result = *((uint64_t *) virt_addr);
+                if (read_result != writeval)
+                    printf("Error in readback at location %d, %zu\n", i, read_result);
+                virt_addr += 8;
+            }
+            break;
+        case 'r':
+            read_checksum = crc32_16bytes_prefetch(virt_addr, map_size, read_checksum, 256);
+            break;
     }
     
     gettimeofday(&time_end, NULL);
@@ -150,7 +187,9 @@ int main(int argc, char **argv) {
                             (time_start.tv_sec + 1.0E-6*time_start.tv_usec));
     printf("Read %zu bytes in %1.3f seconds (%1.3f GB/s)\n", map_size, time_calc, 
         map_size/1024./1024./1024./time_calc);
-
+    if (access_type == 'r')
+        printf("Read  checksum: %8x\n", read_checksum);
+    
     if(munmap(map_base, map_size) == -1) PRINT_ERROR;
     close(fd);
     return 0;
