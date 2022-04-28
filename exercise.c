@@ -159,7 +159,7 @@ int main(int argc, char **argv) {
     printf("Wrote %zu bytes in %1.3f seconds (%1.3f GB/s)\n", map_size, time_calc, 
         map_size/1024./1024./1024./time_calc);
     if (access_type == 'r')
-        printf("Write checksum: %8x\n", write_checksum);
+        printf("Write checksum: %08x\n", write_checksum);
 
     // readback check
 
@@ -188,7 +188,7 @@ int main(int argc, char **argv) {
     printf("Read %zu bytes in %1.3f seconds (%1.3f GB/s)\n", map_size, time_calc, 
         map_size/1024./1024./1024./time_calc);
     if (access_type == 'r')
-        printf("Read  checksum: %8x\n", read_checksum);
+        printf("Read  checksum: %08x\n", read_checksum);
     
     if(munmap(map_base, map_size) == -1) PRINT_ERROR;
     close(fd);
